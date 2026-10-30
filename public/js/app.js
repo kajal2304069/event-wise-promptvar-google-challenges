@@ -318,7 +318,7 @@ function viewAssistant(e) {
   if (aiState === 'none') {
     var why = EW.AI.reason === 'offline'
       ? '<p class="muted">The page cannot reach the Eventwise server. Start it with <code>npm start</code> and open <code>http://localhost:3000</code> instead of opening the file directly.</p>'
-      : '<p class="muted">The server is running, but it has no API key yet.</p><ol class="steps"><li>Copy <code>.env.example</code> to <code>.env</code>.</li><li>Put your Anthropic API key after <code>ANTHROPIC_API_KEY=</code>.</li><li>Restart with <code>npm start</code>.</li></ol>';
+      : '<p class="muted">The server is running, but no AI provider is set up yet.</p><ol class="steps"><li>Copy <code>.env.example</code> to <code>.env</code>.</li><li>Set <code>AI_PROVIDER</code> (for example <code>mistral</code>) and put your key after <code>AI_API_KEY=</code>.</li><li>Restart with <code>npm start</code>.</li></ol>';
     return '<div class="pagehead"><div><h2>AI assistant</h2></div></div><div class="panel"><h3 style="font-size:17px">Turn on the assistant</h3>' + why + '<p class="muted">Budget, timeline, vendors and starter ideas keep working without it.</p></div>';
   }
   var starters = ['Build a week-by-week plan for the next month', 'Where can I cut 10% from the budget?', 'What am I probably forgetting?',
@@ -367,8 +367,10 @@ function toast(msg) { var t = $('#toast'); t.hidden = true; void t.offsetWidth; 
 /* ---------- AI features ---------- */
 function errCopy(c) {
   return ({
-    no_key: 'The server has no API key yet. Add ANTHROPIC_API_KEY to .env and restart.',
-    bad_key: 'The API key was rejected. Check ANTHROPIC_API_KEY in .env.',
+    no_key: 'The server has no API key yet. Add AI_PROVIDER and AI_API_KEY to .env and restart.',
+    bad_key: 'The API key was rejected. Check AI_API_KEY in .env.',
+    no_credit: 'Your AI provider says the account has no credit left. Add credit, or switch AI_PROVIDER in .env to a provider with a free tier.',
+    bad_model: 'The provider does not know that model name. Set AI_MODEL in .env to a model from the provider’s list.',
     offline: 'Could not reach the server. Make sure it is running.',
     rate_limited: 'Too many requests just now. Wait a minute, then try again.',
     invalid_json: 'The answer came back in a format that could not be read. Try again.',
