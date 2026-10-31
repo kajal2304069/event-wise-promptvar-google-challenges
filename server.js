@@ -1,5 +1,5 @@
-
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
@@ -133,6 +133,44 @@ function errorCode(status, msg) {
   return 'upstream_error';
 }
 
+/* POST JSON with Node's own http/https (not fetch): forces IPv4, waits up to AI_TIMEOUT_MS (default 90 s)
+   for the connection, and retries once on a network failure. Fixes "Connect Timeout" on slow or IPv6-broken networks. */
+const TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS) || 90000;
+const RETRY_CODES = new Set(['ETIMEDOUT', 'ECONNRESET', 'EAI_AGAIN', 'ECONNREFUSED', 'EPIPE', 'ENETUNREACH', 'EHOSTUNREACH']);
+function postOnce(url, headers, payload) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const body = JSON.stringify(payload);
+    const lib = u.protocol === 'https:' ? https : http;
+    const req = lib.request({
+      method: 'POST', hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80), path: u.pathname + u.search,
+      headers: Object.assign({}, headers, { 'content-length': Buffer.byteLength(body) }),
+      family: process.env.AI_FORCE_IPV4 === '0' ? 0 : 4, timeout: TIMEOUT_MS
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        let data = {};
+        try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (_) { data = {}; }
+        resolve({ status: res.statusCode, data });
+      });
+      res.on('error', reject);
+    });
+    req.on('timeout', () => { const e = new Error('Timed out after ' + Math.round(TIMEOUT_MS / 1000) + 's'); e.code = 'ETIMEDOUT'; req.destroy(e); });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+async function postJSON(url, headers, payload) {
+  try { return await postOnce(url, headers, payload); }
+  catch (e) {
+    const code = e && (e.code || (e.cause && e.cause.code));
+    if (!RETRY_CODES.has(code)) throw e;
+    await new Promise((r) => setTimeout(r, 800));
+    return postOnce(url, headers, payload);
+  }
+}
+
 async function handleChat(req, res) {
   if (!CONFIGURED) return send(res, 503, { code: 'no_key', error: 'The AI provider is not configured on the server.' });
   const ip = req.socket.remoteAddress || 'unknown';
@@ -158,8 +196,9 @@ async function handleChat(req, res) {
   }
 
   try {
-    const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(90000) });
-    const data = await r.json().catch(() => ({}));
+    const r0 = await postJSON(url, headers, payload);
+    const r = { ok: r0.status >= 200 && r0.status < 300, status: r0.status };
+    const data = r0.data;
     if (!r.ok) {
       const e = data && data.error;
       const msg = (e && (e.message || (typeof e === 'string' ? e : ''))) || data.message || data.detail || 'The AI service returned an error.';
@@ -170,7 +209,7 @@ async function handleChat(req, res) {
     if (PRESET.kind === 'anthropic') return send(res, 200, { content: data.content || [], stop_reason: data.stop_reason || 'end_turn' });
     return send(res, 200, fromOpenAI(data));
   } catch (e) {
-    const c = e && e.cause;
+    const c = (e && e.cause) || e;
     console.error(PROVIDER + ' request failed:', e && e.message, c ? '| cause: ' + (c.code || c.name || '') + ' ' + (c.message || '') : '', '| url: ' + url);
     const local = PROVIDER === 'ollama' ? ' Is Ollama running?' : '';
     return send(res, 502, { code: 'upstream_error', error: 'Could not reach the AI service.' + local });
